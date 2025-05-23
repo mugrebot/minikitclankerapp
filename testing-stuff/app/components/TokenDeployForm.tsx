@@ -3,16 +3,8 @@
 import { useState, useCallback, ChangeEvent } from "react";
 import { useAccount, useWalletClient, usePublicClient, useChainId } from 'wagmi';
 import { base } from 'viem/chains';
-import {
-  Transaction, TransactionButton, TransactionStatus,
-  TransactionStatusAction, TransactionStatusLabel,
-  TransactionToast, TransactionToastIcon,
-  TransactionToastLabel, TransactionToastAction,
-  type LifecycleStatus, type TransactionError, type TransactionResponse,
-} from '@coinbase/onchainkit/transaction';
-import { useNotification } from '@coinbase/onchainkit/minikit';
+import { useNotification, useOpenUrl } from '@coinbase/onchainkit/minikit';
 import { Clanker } from 'clanker-sdk';
-import type { Hex } from 'viem';
 
 const DEFAULT_IMAGE = 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 const QUOTE = {
@@ -22,20 +14,15 @@ const QUOTE = {
 
 type QuoteToken = keyof typeof QUOTE | 'CUSTOM';
 
-type Call = {
-  to: Hex;
-  data: Hex;
-  value: bigint;
-};
-
 export default function TokenDeployForm() {
   const { address } = useAccount();
   const { data: wallet } = useWalletClient();
   const client = usePublicClient();
   const chainId = useChainId();
   const notify = useNotification();
+  const openUrl = useOpenUrl();
 
-  const [phase, setPhase] = useState<'idle'|'building'|'pending'|'success'|'error'>('idle');
+  const [phase, setPhase] = useState<'idle'|'deploying'|'success'|'error'>('idle');
   const [tokenAddr, setAddr] = useState<string | null>(null);
 
   const [f, setF] = useState({
@@ -55,39 +42,25 @@ export default function TokenDeployForm() {
     setF((prev) => ({ ...prev, [name]: value }));
   };
 
-  const onStatus = useCallback((s: LifecycleStatus) => {
-    setPhase(
-      s.statusName === 'buildingTransaction' ? 'building' :
-      s.statusName === 'transactionPending' ? 'pending' :
-      s.statusName === 'success' ? 'success' :
-      s.statusName === 'error' ? 'error' : 'idle'
-    );
-    if (s.statusName === 'success') {
-      const sig = '0x6b04d68ca5c822b9c981d731c83ecb1356b96c8596c7659d397d234856a4537b';
-      const receipt = s.statusData!.transactionReceipts[0];
-      const log = receipt.logs.find(l => l.topics[0] === sig);
-      if (log) setAddr(`0x${log.topics[1]?.slice(26)}`);
+  const reset = () => {
+    setPhase('idle');
+    setAddr(null);
+  };
+
+  const handleDeploy = useCallback(async () => {
+    if (!wallet || !client || !address) {
+      notify({ title: 'Wallet Error', body: 'Please connect your wallet.' });
+      return;
     }
-  }, []);
+    if (chainId !== base.id) {
+      notify({ title: 'Network Error', body: 'Please switch to Base mainnet.' });
+      return;
+    }
 
-  const onSuccess = useCallback(async (r: TransactionResponse) => {
-    await notify({
-      title: 'Token deployed 🎉',
-      body: `Tx: ${r.transactionReceipts[0].transactionHash}`,
-    });
-  }, [notify]);
-
-  const onError = useCallback((e: TransactionError) => {
-    console.error('Deployment failed:', e);
-  }, []);
-
-  const reset = () => { setPhase('idle'); setAddr(null); };
-
-  const buildCalls = async (): Promise<Call[]> => {
-    if (!wallet || !client || !address) return [];
+    setPhase('deploying');
+    setAddr(null);
 
     const clanker = new Clanker({ wallet, publicClient: client });
-    console.log("clanker is ready", clanker);
 
     const cfg = {
       name: f.name,
@@ -104,14 +77,74 @@ export default function TokenDeployForm() {
         durationInDays: +f.vaultDays,
       },
       devBuy: {
-        ethAmount: f.devBuyEth || '0',
+        ethAmount: f.devBuyEth || '0', // Assuming '0' is acceptable if no dev buy
       },
     };
 
-    const tx = await clanker.prepareDeployToken(cfg);
-    console.log('✅ prepared tx ↴\n', tx);
-    return [{ ...tx }];
-  };
+    try {
+      // Directly call deployToken and get the token address
+      // We need to get the transaction hash separately if the SDK allows,
+      // or acknowledge that we might not have it immediately for the first notification.
+      // For now, we'll assume deployToken resolves after the transaction is confirmed
+      // and might not directly give us the hash in a simple way.
+      // The original code derived tokenAddr from logs, which implies onSuccess gave receipt.
+      // Clanker SDK's deployToken returns the token address directly.
+
+      const deployedTokenAddress = await clanker.deployToken(cfg);
+      // To get the transaction hash, we would ideally get it from the clanker.deployToken response
+      // or if clanker.deployToken waits for receipt, it might be part of an object it returns or an event it emits.
+      // The previous code got hash from `r.transactionReceipts[0].transactionHash`
+      // and tokenAddr from logs in `onStatus`.
+      // Since clanker.deployToken returns the address, we use that.
+      // We'll set a placeholder for txnHash for now for the notification.
+      
+      setAddr(deployedTokenAddress); // Set token address
+      setPhase('success');
+
+      // We don't have the transaction hash directly from clanker.deployToken in this simplified flow
+      // We will notify with token address.
+      await notify({
+        title: 'Token deployed 🎉',
+        body: `Token Address: ${deployedTokenAddress}`,
+      });
+      
+      const castText = `I just deployed my new token ${f.name} (${f.symbol})! Check it out: ${deployedTokenAddress}`;
+      let embedUrl = `https://basescan.org/address/${deployedTokenAddress}`; // Default to Basescan
+      if (deployedTokenAddress) {
+        embedUrl = `https://clanker.world/clanker/${deployedTokenAddress}`;
+      }
+      
+      const farcasterUrl = `https://warpcast.com/~/compose?text=${encodeURIComponent(castText)}&embeds[]=${encodeURIComponent(embedUrl)}`;
+
+      try {
+        await openUrl(farcasterUrl);
+        console.log('Attempted to open Farcaster composer.');
+      } catch (error) {
+        console.error('Failed to open Farcaster composer URL:', error);
+        await notify({
+          title: 'Share Failed',
+          body: 'Could not open Farcaster composer.',
+        });
+      }
+
+      await notify({
+        title: 'Update Token Metadata',
+        body: 'Remember to update your token metadata on clanker.world!',
+      });
+
+    } catch (error: unknown) {
+      console.error('Deployment failed:', error);
+      setPhase('error');
+      let errorMessage = 'An unknown error occurred.';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      await notify({
+        title: 'Deployment Failed',
+        body: errorMessage,
+      });
+    }
+  }, [wallet, client, address, chainId, f, notify, openUrl]);
 
   return (
     <form onSubmit={(e) => e.preventDefault()}>
@@ -221,7 +254,7 @@ export default function TokenDeployForm() {
               />
             </div>
 
-            <div className="flex flex-col justify-end space-y-2">
+            <div className="flex flex-col justify-end space-y-2 col-span-2">
               <label className="block text-[#666]">&gt; vault_duration_days</label>
               <input
                 type="number"
@@ -236,66 +269,60 @@ export default function TokenDeployForm() {
           </div>
 
           <div className="mt-8 flex justify-center">
-            {chainId === base.id ? (
-              <Transaction
-                chainId={base.id}
-                calls={buildCalls}
-                onStatus={onStatus}
-                onSuccess={onSuccess}
-                onError={onError}
-              >
-                <TransactionButton className="px-6 py-3 bg-[#ff9500] hover:bg-[#ffb84d] text-black font-medium rounded-lg transition-colors min-w-[200px] text-center cursor-pointer active:bg-[#cc7600] touch-manipulation" />
-                <TransactionStatus>
-                  <TransactionStatusAction />
-                  <TransactionStatusLabel />
-                </TransactionStatus>
-                <TransactionToast>
-                  <TransactionToastIcon />
-                  <TransactionToastLabel />
-                  <TransactionToastAction />
-                </TransactionToast>
-              </Transaction>
+            {address ? (
+              chainId === base.id ? (
+                <button
+                  onClick={handleDeploy}
+                  disabled={phase === 'deploying'}
+                  className="px-6 py-3 bg-[#ff9500] hover:bg-[#ffb84d] text-black font-medium rounded-lg transition-colors min-w-[200px] text-center cursor-pointer active:bg-[#cc7600] touch-manipulation disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {phase === 'deploying' ? 'Deploying...' : 
+                   phase === 'success' ? 'Deployed!' :
+                   phase === 'error' ? 'Try Again' :
+                   'Deploy Token'}
+                </button>
+              ) : (
+                <p className="text-[#ff9500]">Please switch to Base mainnet</p>
+              )
             ) : (
-              <p className="text-[#ff9500]">Please switch to Base mainnet</p>
+              null // Or <ConnectWalletButton /> or similar
             )}
           </div>
 
-          {phase === 'pending' && (
+          {phase === 'deploying' && (
             <p className="text-sm text-[#666] mt-4 text-center">
               Waiting for confirmations...
             </p>
           )}
-
-          {phase === 'error' && (
-            <div className="mt-4 text-center">
-              <button
-                onClick={reset}
-                className="px-6 py-3 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg transition-colors"
-              >
-                Try Again
-              </button>
-            </div>
-          )}
-
+          
+          {/* Success message with token address and link */}
           {phase === 'success' && tokenAddr && (
             <div className="mt-4 text-center">
               <p className="text-[#00ff00] mb-2">Token successfully deployed!</p>
               <div className="text-[#666] break-all text-sm mb-4">
-                <p className="mb-2">Token address: {tokenAddr}</p>
-                <a 
-                  href={`https://clanker.world/clanker/${tokenAddr}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[#ff9500] hover:text-[#ffb84d] transition-colors underline"
-                >
-                  View on Clanker.world →
-                </a>
+                Token Address: <a href={`https://basescan.org/address/${tokenAddr}`} target="_blank" rel="noopener noreferrer" className="text-[#00ff00] hover:underline">{tokenAddr}</a>
+              </div>
+              {/* Optional: Link to Clanker.world */}
+              <div className="text-[#666] break-all text-sm mb-4">
+                Manage on: <a href={`https://clanker.world/clanker/${tokenAddr}`} target="_blank" rel="noopener noreferrer" className="text-[#00ff00] hover:underline">clanker.world</a>
               </div>
               <button
                 onClick={reset}
-                className="mt-4 px-6 py-3 bg-[#00ff00] hover:bg-[#33ff33] text-black font-medium rounded-lg transition-colors"
+                className="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors mt-2"
               >
-                Deploy Another Token
+                Deploy Another
+              </button>
+            </div>
+          )}
+
+          {phase === 'error' && (
+            <div className="mt-4 text-center">
+              <p className="text-red-500 mb-2">Deployment Failed.</p>
+              <button
+                onClick={reset} // Or handleDeploy to retry with same form data
+                className="px-6 py-3 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg transition-colors"
+              >
+                Try Again
               </button>
             </div>
           )}
