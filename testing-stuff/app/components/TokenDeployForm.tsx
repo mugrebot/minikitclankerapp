@@ -105,7 +105,7 @@ export default function TokenDeployForm() {
       // We will notify with token address.
       await notify({
         title: 'Token deployed 🎉',
-        body: `Token Address: ${deployedTokenAddress}`,
+        body: `Token Address: ${deployedTokenAddress}. Remember to update your token metadata on clanker.world!`,
       });
       
       const castText = `I just deployed my new token ${f.name} (${f.symbol})! Check it out: ${deployedTokenAddress}`;
@@ -126,11 +126,6 @@ export default function TokenDeployForm() {
           body: 'Could not open Farcaster composer.',
         });
       }
-
-      await notify({
-        title: 'Update Token Metadata',
-        body: 'Remember to update your token metadata on clanker.world!',
-      });
 
     } catch (error: unknown) {
       console.error('Deployment failed:', error);
