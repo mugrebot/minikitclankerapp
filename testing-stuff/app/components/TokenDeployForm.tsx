@@ -62,7 +62,7 @@ export default function TokenDeployForm() {
 
     const clanker = new Clanker({ wallet, publicClient: client });
 
-    const cfg = {
+    const cfg: Parameters<typeof clanker.deployToken>[0] = {
       name: f.name,
       symbol: f.symbol,
       image: f.image || DEFAULT_IMAGE,
@@ -76,10 +76,15 @@ export default function TokenDeployForm() {
         percentage: +f.vaultPct,
         durationInDays: +f.vaultDays,
       },
-      devBuy: {
-        ethAmount: f.devBuyEth || '0',
-      },
     };
+
+    if (f.devBuyEth && parseFloat(f.devBuyEth) > 0) {
+      cfg.devBuy = {
+        ethAmount: f.devBuyEth,
+      };
+    }
+
+    console.log('Deploying with config:', cfg);
 
     try {
       // Directly call deployToken and get the token address
