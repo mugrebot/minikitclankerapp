@@ -77,7 +77,7 @@ export default function TokenDeployForm() {
         durationInDays: +f.vaultDays,
       },
       devBuy: {
-        ethAmount: f.devBuyEth || '0', // Assuming '0' is acceptable if no dev buy
+        ethAmount: f.devBuyEth || '0',
       },
     };
 
