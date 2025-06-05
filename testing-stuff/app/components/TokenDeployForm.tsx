@@ -5,6 +5,7 @@ import { useAccount, useWalletClient, usePublicClient, useChainId } from 'wagmi'
 import { base } from 'viem/chains';
 import { useNotification, useOpenUrl } from '@coinbase/onchainkit/minikit';
 import { Clanker } from 'clanker-sdk';
+import { parseEther } from "viem";
 
 const DEFAULT_IMAGE = 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 const QUOTE = {
@@ -62,7 +63,9 @@ export default function TokenDeployForm() {
 
     const clanker = new Clanker({ wallet, publicClient: client });
 
-    const cfg: Parameters<typeof clanker.deployToken>[0] = {
+    const cfg: Omit<Parameters<typeof clanker.deployToken>[0], 'devBuy'> & {
+      devBuy?: { ethAmount: bigint };
+    } = {
       name: f.name,
       symbol: f.symbol,
       image: f.image || DEFAULT_IMAGE,
@@ -80,7 +83,7 @@ export default function TokenDeployForm() {
 
     if (f.devBuyEth && parseFloat(f.devBuyEth) > 0) {
       cfg.devBuy = {
-        ethAmount: f.devBuyEth,
+        ethAmount: parseEther(f.devBuyEth),
       };
     }
 
@@ -95,7 +98,7 @@ export default function TokenDeployForm() {
       // The original code derived tokenAddr from logs, which implies onSuccess gave receipt.
       // Clanker SDK's deployToken returns the token address directly.
 
-      const deployedTokenAddress = await clanker.deployToken(cfg);
+      const deployedTokenAddress = await clanker.deployToken(cfg as unknown as Parameters<typeof clanker.deployToken>[0]);
       // To get the transaction hash, we would ideally get it from the clanker.deployToken response
       // or if clanker.deployToken waits for receipt, it might be part of an object it returns or an event it emits.
       // The previous code got hash from `r.transactionReceipts[0].transactionHash`
