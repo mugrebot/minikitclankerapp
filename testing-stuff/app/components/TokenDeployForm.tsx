@@ -5,7 +5,6 @@ import { useAccount, useWalletClient, usePublicClient, useChainId } from 'wagmi'
 import { base } from 'viem/chains';
 import { useNotification, useOpenUrl } from '@coinbase/onchainkit/minikit';
 import { Clanker } from 'clanker-sdk';
-import { parseEther } from "viem";
 
 const DEFAULT_IMAGE = 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 const QUOTE = {
@@ -64,7 +63,7 @@ export default function TokenDeployForm() {
     const clanker = new Clanker({ wallet, publicClient: client });
 
     const cfg: Omit<Parameters<typeof clanker.deployToken>[0], 'devBuy'> & {
-      devBuy?: { ethAmount: bigint };
+      devBuy?: { ethAmount: string };
     } = {
       name: f.name,
       symbol: f.symbol,
@@ -83,7 +82,7 @@ export default function TokenDeployForm() {
 
     if (f.devBuyEth && parseFloat(f.devBuyEth) > 0) {
       cfg.devBuy = {
-        ethAmount: parseEther(f.devBuyEth),
+        ethAmount: f.devBuyEth,
       };
     }
 
